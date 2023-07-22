@@ -21,7 +21,7 @@ pub async fn run_linkers() -> Result<(), Error> {
             .expect("Cannot build bot name regex.")
     });
 
-    if !has_unread_messages().await {
+    if !has_unread_messages().await? {
         return Ok(());
     }
 
