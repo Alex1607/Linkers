@@ -38,37 +38,37 @@ pub struct Providers {
 }
 
 impl CompiledProviderDetails {
-    pub fn new(details: &ProviderDetails) -> CompiledProviderDetails {
-        CompiledProviderDetails {
-            url_pattern: Regex::new(details.url_pattern.as_str()).unwrap(),
+    pub fn new(details: &ProviderDetails) -> Result<CompiledProviderDetails, regex::Error> {
+        Ok(CompiledProviderDetails {
+            url_pattern: Regex::new(details.url_pattern.as_str())?,
             complete_provider: details.complete_provider,
             rules: details
                 .rules
                 .iter()
-                .map(|x| Regex::new(x.as_str()).unwrap())
-                .collect(),
+                .map(|x| Regex::new(x.as_str()))
+                .collect::<Result<Vec<_>, _>>()?,
             referral_marketing: details
                 .referral_marketing
                 .iter()
-                .map(|x| Regex::new(x.as_str()).unwrap())
-                .collect(),
+                .map(|x| Regex::new(x.as_str()))
+                .collect::<Result<Vec<_>, _>>()?,
             raw_rules: details
                 .raw_rules
                 .iter()
-                .map(|x| Regex::new(x.as_str()).unwrap())
-                .collect(),
+                .map(|x| Regex::new(x.as_str()))
+                .collect::<Result<Vec<_>, _>>()?,
             exceptions: details
                 .exceptions
                 .iter()
-                .map(|x| Regex::new(x.as_str()).unwrap())
-                .collect(),
+                .map(|x| Regex::new(x.as_str()))
+                .collect::<Result<Vec<_>, _>>()?,
             redirections: details
                 .redirections
                 .iter()
-                .map(|x| Regex::new(x.as_str()).unwrap())
-                .collect(),
+                .map(|x| Regex::new(x.as_str()))
+                .collect::<Result<Vec<_>, _>>()?,
             force_redirection: details.force_redirection,
-        }
+        })
     }
 }
 
@@ -77,15 +77,22 @@ pub async fn compile_providers() -> Vec<CompiledProviderDetails> {
         .get("https://gitlab.com/ClearURLs/rules/-/raw/master/data.min.json")
         .send()
         .await
-        .unwrap()
-        .text();
+        .expect("Unable to load rules, bot cannot be started.")
+        .text()
+        .await
+        .expect("Unable to load rules, bot cannot be started.");
 
-    let providers = serde_json::from_str::<Providers>(resp.await.unwrap().as_str()).unwrap();
+    let providers = serde_json::from_str::<Providers>(resp.as_str())
+        .expect("Unable to load rules, bot cannot be started.");
 
     let compiled_providers: Vec<CompiledProviderDetails> = providers
         .providers
         .iter()
         .map(|provider| CompiledProviderDetails::new(provider.1))
+        .filter_map(|provider| match provider {
+            Ok(compiled_provider) => Some(compiled_provider),
+            Err(_) => None,
+        })
         .collect();
 
     compiled_providers

@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use crate::error::Error;
 use regex::{Regex, RegexBuilder};
 use url::Url;
 
@@ -11,20 +12,20 @@ static PROVIDER: async_once_cell::OnceCell<Vec<CompiledProviderDetails>> =
 static URL_REGEX: once_cell::sync::OnceCell<Regex> = once_cell::sync::OnceCell::new();
 static CLIENT_REGEX: once_cell::sync::OnceCell<Regex> = once_cell::sync::OnceCell::new();
 
-pub async fn run_linkers() {
+pub async fn run_linkers() -> Result<(), Error> {
     let providers = PROVIDER.get_or_init(compile_providers()).await;
     let bot_name_regex = CLIENT_REGEX.get_or_init(|| {
         RegexBuilder::new(r"(@linkers)")
             .case_insensitive(true)
             .build()
-            .unwrap()
+            .expect("Cannot build bot name regex.")
     });
 
     if !has_unread_messages().await {
-        return;
+        return Ok(());
     }
 
-    let message_collection = get_latest_messages().await;
+    let message_collection = get_latest_messages().await?;
 
     let new_comments: Vec<&Message> = message_collection
         .messages
@@ -38,7 +39,7 @@ pub async fn run_linkers() {
     for tag_comment in new_comments {
         tokio::time::sleep(Duration::from_secs(1)).await; //Prevent spamming the API in one go and give it some breathing room
 
-        let post = get_post(tag_comment.item_id).await;
+        let post = get_post(tag_comment.item_id).await?;
         let optional_post_comment = post
             .comments
             .iter()
@@ -76,11 +77,15 @@ pub async fn run_linkers() {
         )
         .await;
     }
+
+    Ok(())
 }
 
 async fn cleanup_comment(input: &str, providers: &[CompiledProviderDetails]) -> Vec<String> {
     let mut output = Vec::new();
-    let urls_regex = URL_REGEX.get_or_init(|| Regex::new(r"(https?://\S+)").unwrap());
+    let urls_regex = URL_REGEX.get_or_init(|| {
+        Regex::new(r"(https?://\S+)").expect("Cannot build url regex. Bot won't work.")
+    });
 
     for url in urls_regex.find_iter(input) {
         let Some(cleaner_url) = clean_url(url.as_str(), providers) else {

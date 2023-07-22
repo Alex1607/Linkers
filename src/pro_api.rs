@@ -1,7 +1,10 @@
+use std::env;
+
 use http::header::{COOKIE, USER_AGENT};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::env;
+
+use crate::error::Error;
 
 static PRO_CLIENT: once_cell::sync::OnceCell<ProClient> = once_cell::sync::OnceCell::new();
 
@@ -51,7 +54,7 @@ pub struct Sync {
     pub inbox: Inbox,
 }
 
-pub async fn get_latest_messages() -> MessageCollection {
+pub async fn get_latest_messages() -> Result<MessageCollection, Error> {
     let client = PRO_CLIENT.get_or_init(init_pro_client);
 
     let resp = client
@@ -60,15 +63,14 @@ pub async fn get_latest_messages() -> MessageCollection {
         .header(COOKIE, &client.cookies)
         .header(USER_AGENT, &client.user_agent)
         .send()
-        .await
-        .unwrap()
+        .await?
         .text()
-        .await;
+        .await?;
 
-    serde_json::from_str::<MessageCollection>(resp.unwrap().as_str()).unwrap()
+    Ok(serde_json::from_str::<MessageCollection>(resp.as_str())?)
 }
 
-pub async fn get_post(item_id: i32) -> Post {
+pub async fn get_post(item_id: i32) -> Result<Post, Error> {
     let client = PRO_CLIENT.get_or_init(init_pro_client);
 
     let resp = client
@@ -80,18 +82,17 @@ pub async fn get_post(item_id: i32) -> Post {
         .header(COOKIE, &client.cookies)
         .header(USER_AGENT, &client.user_agent)
         .send()
-        .await
-        .unwrap()
+        .await?
         .text()
-        .await;
+        .await?;
 
-    serde_json::from_str::<Post>(resp.unwrap().as_str()).unwrap()
+    Ok(serde_json::from_str::<Post>(resp.as_str())?)
 }
 
 pub async fn reply_comment(item_id: i32, parent_comment: i32, message: String) {
     let client = PRO_CLIENT.get_or_init(init_pro_client);
 
-    let status_code = client
+    let response = client
         .http_client
         .post("https://pr0gramm.com/api/comments/post")
         .header(COOKIE, &client.cookies)
@@ -103,18 +104,26 @@ pub async fn reply_comment(item_id: i32, parent_comment: i32, message: String) {
             parent_id = parent_comment
         ))
         .send()
-        .await
-        .unwrap()
-        .status();
+        .await;
 
-    println!(
-        "Posted comment on post {} with status code: {}",
-        item_id,
-        status_code.as_u16()
-    )
+    match response {
+        Ok(res) => {
+            println!(
+                "Posted comment on post {} with status code: {}",
+                item_id,
+                res.status().as_u16()
+            )
+        }
+        Err(res) => {
+            println!(
+                "Error while posting comment on post {} with error: {}",
+                item_id, res
+            )
+        }
+    }
 }
 
-pub async fn has_unread_messages() -> bool {
+pub async fn has_unread_messages() -> Result<bool, Error> {
     let client = PRO_CLIENT.get_or_init(init_pro_client);
 
     let resp = client
@@ -123,16 +132,11 @@ pub async fn has_unread_messages() -> bool {
         .header(COOKIE, &client.cookies)
         .header(USER_AGENT, &client.user_agent)
         .send()
-        .await
-        .unwrap()
+        .await?
         .text()
-        .await;
+        .await?;
 
-    serde_json::from_str::<Sync>(resp.unwrap().as_str())
-        .unwrap()
-        .inbox
-        .comments
-        > 0
+    Ok(serde_json::from_str::<Sync>(resp.as_str())?.inbox.comments > 0)
 }
 
 fn init_pro_client() -> ProClient {
