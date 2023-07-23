@@ -1,9 +1,9 @@
 use std::time::Duration;
 
-use crate::error::Error;
 use regex::{Regex, RegexBuilder};
 use url::Url;
 
+use crate::error::Error;
 use crate::pro_api::{get_latest_messages, get_post, has_unread_messages, reply_comment, Message};
 use crate::providers::{compile_providers, CompiledProviderDetails};
 
@@ -30,22 +30,28 @@ pub async fn run_linkers() -> Result<(), Error> {
     let new_comments: Vec<&Message> = message_collection
         .messages
         .iter()
-        .filter(|x1| x1.read == 1)
+        .filter(|x1| x1.read == 0)
+        .filter(|x1| x1.message_type.eq("comment"))
         .filter(|x| bot_name_regex.is_match(x.message.as_str()))
+        .filter(|x| x.item_id.is_some())
         .collect();
 
     println!("{:?}", new_comments);
 
     for tag_comment in new_comments {
+        let Some(item_id) = tag_comment.item_id else {
+            continue;
+        };
+
         tokio::time::sleep(Duration::from_secs(1)).await; //Prevent spamming the API in one go and give it some breathing room
 
-        let post = get_post(tag_comment.item_id).await?;
+        let post = get_post(item_id).await?;
         let optional_post_comment = post
             .comments
             .iter()
             .find(|comment| comment.id == tag_comment.id);
 
-        // println!("post Comment: {:?}", optional_post_comment);
+        println!("post Comment: {:?}", optional_post_comment);
 
         let Some(post_comment) = optional_post_comment else {
             continue;
@@ -60,7 +66,7 @@ pub async fn run_linkers() -> Result<(), Error> {
             .iter()
             .find(|comment| comment.id == post_comment.parent);
 
-        // println!("parent Comment: {:?}", optional_parent_comment);
+        println!("parent Comment: {:?}", optional_parent_comment);
 
         let Some(parent_comment) = optional_parent_comment else {
             continue;
@@ -68,14 +74,9 @@ pub async fn run_linkers() -> Result<(), Error> {
 
         let links = cleanup_comment(&parent_comment.content, providers).await;
 
-        // println!("answer {:?}", links);
+        println!("answer {:?}", links);
 
-        reply_comment(
-            tag_comment.item_id,
-            post_comment.id,
-            build_response_text(links),
-        )
-        .await;
+        reply_comment(item_id, post_comment.id, build_response_text(links)).await;
     }
 
     Ok(())
