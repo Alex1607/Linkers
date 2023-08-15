@@ -2,6 +2,7 @@ mod cleaner;
 mod error;
 mod pro_api;
 mod providers;
+mod utils_api;
 
 #[tokio::main]
 async fn main() {

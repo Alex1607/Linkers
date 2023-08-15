@@ -6,6 +6,7 @@ use url::Url;
 use crate::error::Error;
 use crate::pro_api::{get_latest_messages, get_post, has_unread_messages, reply_comment, Message};
 use crate::providers::{compile_providers, CompiledProviderDetails};
+use crate::utils_api::{check_for_amp, get_redirects};
 
 static PROVIDER: async_once_cell::OnceCell<Vec<CompiledProviderDetails>> =
     async_once_cell::OnceCell::new();
@@ -89,11 +90,11 @@ async fn cleanup_comment(input: &str, providers: &[CompiledProviderDetails]) -> 
     });
 
     for url in urls_regex.find_iter(input) {
-        let Some(cleaner_url) = clean_url(url.as_str(), providers) else {
+        let Some(cleaner_url) = clean_url(url.as_str(), providers).await else {
             continue;
         };
 
-        if cleaner_url.len() >= url.as_str().len() {
+        if cleaner_url.eq(url.as_str()) {
             continue;
         }
 
@@ -103,10 +104,24 @@ async fn cleanup_comment(input: &str, providers: &[CompiledProviderDetails]) -> 
     output
 }
 
-fn clean_url(url: &str, rules: &[CompiledProviderDetails]) -> Option<String> {
+async fn clean_url(url: &str, rules: &[CompiledProviderDetails]) -> Option<String> {
+    let mut did_changes = false;
+
     let Ok(mut parsed_url) = Url::parse(url) else {
         return None;
     };
+
+    if let Some(amp_results) = remove_amp(&parsed_url).await {
+        println!("amp {:?} original: {}", amp_results, url);
+        parsed_url = amp_results;
+        did_changes = true;
+    }
+
+    if let Some(redirect_result) = remove_redirects(&parsed_url).await {
+        println!("redirect {:?} original: {}", redirect_result, url);
+        parsed_url = redirect_result;
+        did_changes = true;
+    }
 
     let provider_list: Vec<&CompiledProviderDetails> = rules
         .iter()
@@ -114,6 +129,9 @@ fn clean_url(url: &str, rules: &[CompiledProviderDetails]) -> Option<String> {
         .collect();
 
     if provider_list.is_empty() {
+        if did_changes {
+            return Some(parsed_url.to_string().trim_end_matches('?').to_string());
+        }
         return None;
     };
 
@@ -123,6 +141,9 @@ fn clean_url(url: &str, rules: &[CompiledProviderDetails]) -> Option<String> {
             .iter()
             .any(|exception_regex| exception_regex.is_match(url))
         {
+            if did_changes {
+                return Some(parsed_url.to_string().trim_end_matches('?').to_string());
+            }
             return None;
         }
 
@@ -141,6 +162,55 @@ fn clean_url(url: &str, rules: &[CompiledProviderDetails]) -> Option<String> {
     }
 
     Some(parsed_url.to_string().trim_end_matches('?').to_string())
+}
+
+async fn remove_redirects(url: &Url) -> Option<Url> {
+    let redirect_results = get_redirects(url.as_str()).await;
+
+    let Ok(redirects) = redirect_results else {
+        return None;
+    };
+
+    let Some(result_url) = redirects.result_url else {
+        return None;
+    };
+
+    return match Url::parse(result_url.as_str()) {
+        Ok(amp_url) => Some(amp_url),
+        _ => None,
+    };
+}
+
+async fn remove_amp(url: &Url) -> Option<Url> {
+    let amp_result = check_for_amp(url.as_str()).await;
+
+    let Ok(amp) = amp_result else {
+        return None;
+    };
+
+    if amp.is_empty() {
+        return None;
+    }
+
+    if let Some(x) = &amp[0].amp_canonical {
+        if !x.is_amp {
+            return match Url::parse(x.url.as_str()) {
+                Ok(amp_url) => Some(amp_url),
+                _ => None,
+            };
+        }
+    }
+
+    if let Some(x) = &amp[0].canonical {
+        if !x.is_amp {
+            return match Url::parse(x.url.as_str()) {
+                Ok(amp_url) => Some(amp_url),
+                _ => None,
+            };
+        }
+    }
+
+    None
 }
 
 fn build_response_text(links: Vec<String>) -> String {
@@ -165,17 +235,22 @@ fn build_response_text(links: Vec<String>) -> String {
 async fn test() {
     let providers = PROVIDER.get_or_init(compile_providers()).await;
 
-    let option_with_and_without_tracking = cleanup_comment("test1 https://enteentelos.de foo https://www.phoronix.com/scan.php?page=news_item&px=Ioquake3-Auto-Updater&utm_source=feedburner&utm_medium=feed&utm_campaign=Feed%3A+Phoronix+(Phoronix) sfdfasfas", providers).await;
-    let option_without_tracking = cleanup_comment("test2 https://enteentelos.de bar https://www.phoronix.com/scan.php?page=news_item&px=Ioquake3-Auto-Updater jkhpoi", providers).await;
-    let option_with_multiple_tracking = cleanup_comment("test3 https://enteentelos.de buzz https://www.google.de/search?q=google&source=hp&ei=LgC7ZJb4Oq6Gxc8Pke6SuAw&ved=0ahUKEwiWx7K85qCAAxUuQ_EDHRG3BMcQ4dUDCAs&uact=5&oq=google&gs_lp=Egdnd3Mtd2l6IgZnb29nbGUyERAuGIAEGLEDGIMBGMcBGNEDMgsQABiABBixAxiDATILEAAYgAQYsQMYgwEyCxAAGIAEGLEDGIMBMgsQABiABBixAxiDATILEAAYgAQYsQMYgwEyCxAAGIAEGLEDGIMBMggQABiABBixAzIIEAAYgAQYsQMyCxAAGIAEGLEDGIMBSP4TUIMOWPAScAF4AJABAJgBQaABrgKqAQE2uAEDyAEA-AEBqAIKwgIKEAAYAxiPARjqAsICChAuGAMYjwEY6gLCAgsQLhiKBRixAxiDAcICCxAAGIoFGLEDGIMB&sclient=gws-wiz aft3ge  https://www.phoronix.com/scan.php?page=news_item&px=Ioquake3-Auto-Updater&utm_source=feedburner&utm_medium=feed&utm_campaign=Feed%3A+Phoronix+(Phoronix)", providers).await;
+    let option_with_amp_tracking = cleanup_comment("test4 https://www.google.com/amp/s/electrek.co/2018/06/19/tesla-model-3-assembly-line-inside-tent-elon-musk/amp/", providers).await;
+    let option_with_amp_and_redirect_tracking = cleanup_comment("test5 https://www.google.com/amp/s/electrek.co/2018/06/19/tesla-model-3-assembly-line-inside-tent-elon-musk/amp/ https://bit.ly/3DlYLDG", providers).await;
+    let option_with_and_without_tracking = cleanup_comment("test1 https://duckduckgo.com/ foo https://www.phoronix.com/scan.php?page=news_item&px=Ioquake3-Auto-Updater&utm_source=feedburner&utm_medium=feed&utm_campaign=Feed%3A+Phoronix+(Phoronix) sfdfasfas", providers).await;
+    let option_without_tracking_and_redirect = cleanup_comment("test2 https://duckduckgo.com/ bar https://www.phoronix.com/news/Ioquake3-Auto-Updater jkhpoi", providers).await;
+    let option_with_multiple_tracking = cleanup_comment("test3 https://duckduckgo.com/ buzz https://www.google.de/search?q=google&source=hp&ei=LgC7ZJb4Oq6Gxc8Pke6SuAw&ved=0ahUKEwiWx7K85qCAAxUuQ_EDHRG3BMcQ4dUDCAs&uact=5&oq=google&gs_lp=Egdnd3Mtd2l6IgZnb29nbGUyERAuGIAEGLEDGIMBGMcBGNEDMgsQABiABBixAxiDATILEAAYgAQYsQMYgwEyCxAAGIAEGLEDGIMBMgsQABiABBixAxiDATILEAAYgAQYsQMYgwEyCxAAGIAEGLEDGIMBMggQABiABBixAzIIEAAYgAQYsQMyCxAAGIAEGLEDGIMBSP4TUIMOWPAScAF4AJABAJgBQaABrgKqAQE2uAEDyAEA-AEBqAIKwgIKEAAYAxiPARjqAsICChAuGAMYjwEY6gLCAgsQLhiKBRixAxiDAcICCxAAGIoFGLEDGIMB&sclient=gws-wiz aft3ge  https://www.phoronix.com/scan.php?page=news_item&px=Ioquake3-Auto-Updater&utm_source=feedburner&utm_medium=feed&utm_campaign=Feed%3A+Phoronix+(Phoronix)", providers).await;
+    let option_with_redirect_and_tracking = cleanup_comment("test6 https://bit.ly/3DlYLDG", providers).await;
+
+    println!("{:?}", option_with_and_without_tracking);
 
     assert_eq!(option_with_and_without_tracking.len(), 1);
     assert_eq!(
         option_with_and_without_tracking[0],
-        "https://www.phoronix.com/scan.php?page=news_item&px=Ioquake3-Auto-Updater"
+        "https://www.phoronix.com/news/Ioquake3-Auto-Updater"
     );
 
-    assert_eq!(option_without_tracking.len(), 0);
+    assert_eq!(option_without_tracking_and_redirect.len(), 0);
 
     assert_eq!(option_with_multiple_tracking.len(), 2);
     assert_eq!(
@@ -184,6 +259,28 @@ async fn test() {
     );
     assert_eq!(
         option_with_multiple_tracking[1],
-        "https://www.phoronix.com/scan.php?page=news_item&px=Ioquake3-Auto-Updater"
+        "https://www.phoronix.com/news/Ioquake3-Auto-Updater"
+    );
+
+    assert_eq!(option_with_amp_tracking.len(), 1);
+    assert_eq!(
+        option_with_amp_tracking[0],
+        "https://electrek.co/2018/06/19/tesla-model-3-assembly-line-inside-tent-elon-musk/"
+    );
+
+    assert_eq!(option_with_amp_and_redirect_tracking.len(), 2);
+    assert_eq!(
+        option_with_amp_and_redirect_tracking[0],
+        "https://electrek.co/2018/06/19/tesla-model-3-assembly-line-inside-tent-elon-musk/"
+    );
+    assert_eq!(
+        option_with_amp_and_redirect_tracking[1],
+        "https://roli.com/products/seaboard/rise2"
+    );
+
+    assert_eq!(option_with_redirect_and_tracking.len(), 1);
+    assert_eq!(
+        option_with_redirect_and_tracking[0],
+        "https://roli.com/products/seaboard/rise2"
     );
 }
