@@ -97,15 +97,6 @@ pub async fn check_for_amp(url: &str) -> Result<Vec<Item>, Error> {
         .text()
         .await?;
 
-    println!(
-        "{:?}",
-        format!(
-            "https://www.amputatorbot.com/api/v1/convert?gac=true&md=3&q={}",
-            url
-        )
-    );
-    println!("{:?}", resp.as_str());
-
     Ok(serde_json::from_str::<Vec<Item>>(resp.as_str())?)
 }
 

@@ -112,13 +112,11 @@ async fn clean_url(url: &str, rules: &[CompiledProviderDetails]) -> Option<Strin
     };
 
     if let Some(amp_results) = remove_amp(&parsed_url).await {
-        println!("amp {:?} original: {}", amp_results, url);
         parsed_url = amp_results;
         did_changes = true;
     }
 
     if let Some(redirect_result) = remove_redirects(&parsed_url).await {
-        println!("redirect {:?} original: {}", redirect_result, url);
         parsed_url = redirect_result;
         did_changes = true;
     }
@@ -241,8 +239,6 @@ async fn test() {
     let option_without_tracking_and_redirect = cleanup_comment("test2 https://duckduckgo.com/ bar https://www.phoronix.com/news/Ioquake3-Auto-Updater jkhpoi", providers).await;
     let option_with_multiple_tracking = cleanup_comment("test3 https://duckduckgo.com/ buzz https://www.google.de/search?q=google&source=hp&ei=LgC7ZJb4Oq6Gxc8Pke6SuAw&ved=0ahUKEwiWx7K85qCAAxUuQ_EDHRG3BMcQ4dUDCAs&uact=5&oq=google&gs_lp=Egdnd3Mtd2l6IgZnb29nbGUyERAuGIAEGLEDGIMBGMcBGNEDMgsQABiABBixAxiDATILEAAYgAQYsQMYgwEyCxAAGIAEGLEDGIMBMgsQABiABBixAxiDATILEAAYgAQYsQMYgwEyCxAAGIAEGLEDGIMBMggQABiABBixAzIIEAAYgAQYsQMyCxAAGIAEGLEDGIMBSP4TUIMOWPAScAF4AJABAJgBQaABrgKqAQE2uAEDyAEA-AEBqAIKwgIKEAAYAxiPARjqAsICChAuGAMYjwEY6gLCAgsQLhiKBRixAxiDAcICCxAAGIoFGLEDGIMB&sclient=gws-wiz aft3ge  https://www.phoronix.com/scan.php?page=news_item&px=Ioquake3-Auto-Updater&utm_source=feedburner&utm_medium=feed&utm_campaign=Feed%3A+Phoronix+(Phoronix)", providers).await;
     let option_with_redirect_and_tracking = cleanup_comment("test6 https://bit.ly/3DlYLDG", providers).await;
-
-    println!("{:?}", option_with_and_without_tracking);
 
     assert_eq!(option_with_and_without_tracking.len(), 1);
     assert_eq!(
